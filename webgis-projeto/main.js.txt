@@ -1,0 +1,84 @@
+// Inicializa o mapa no Brasil
+const map = L.map('map').setView([-14.2350, -51.9253], 4);
+
+// Camadas base
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+const satelite = L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri World Imagery', maxZoom: 23 });
+const topografico = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenTopoMap' });
+const baseMaps = { "Mapa de Ruas (OSM)": osm, "Imagem de Satélite": satelite, "Mapa Topográfico": topografico };
+
+// Camada de Estados (IBGE)
+const estadosLayerGroup = L.layerGroup().addTo(map);
+fetch("https://servicodados.ibge.gov.br/api/v4/malhas/estados?formato=application/vnd.geo+json&qualidade=intermediaria")
+  .then(resp => resp.json())
+  .then(data => {
+    L.geoJSON(data, {
+      style: { color: "#006400", weight: 2, fillOpacity: 0.1 },
+      onEachFeature: (feature, layer) => layer.bindPopup(`<strong>Estado:</strong> ${feature.properties.nome}`)
+    }).addTo(estadosLayerGroup);
+  });
+
+// Camada INCRA SIGEF
+const sigefLayer = L.layerGroup().addTo(map);
+fetch("https://raw.githubusercontent.com/lcfj97/teste/main/INCRA%20SIGEF%20MT.qmd")
+  .then(resp => resp.json())
+  .then(data => {
+    L.geoJSON(data, {
+      style: { color: "orange", weight: 2, fillOpacity: 0.2 },
+      onEachFeature: (feature, layer) => {
+        let props = feature.properties || {};
+        let info = `<strong>Imóvel:</strong> ${props.nome || "Sem nome"}<br/>`;
+        info += `<strong>Matrícula:</strong> ${props.matricula || "-"}<br/>`;
+        info += `<strong>Área:</strong> ${props.area || "-"} ha`;
+        layer.bindPopup(info);
+      }
+    }).addTo(sigefLayer);
+  });
+
+// Controle de camadas base
+L.control.layers(baseMaps, {}, { collapsed: false }).addTo(map);
+
+// Escala
+L.control.scale({ imperial: false, metric: true }).addTo(map);
+
+// Ferramenta de desenho
+const drawnItems = new L.FeatureGroup().addTo(map);
+const drawControl = new L.Control.Draw({
+  edit: { featureGroup: drawnItems },
+  draw: { polygon:true, polyline:true, rectangle:true, circle:false, marker:true, circlemarker:false }
+});
+map.addControl(drawControl);
+map.on(L.Draw.Event.CREATED, e => drawnItems.addLayer(e.layer));
+
+// Botão Feições
+const featureControl = L.control({position: 'topright'});
+featureControl.onAdd = function(map) {
+  const div = L.DomUtil.create('div', 'feature-control');
+  div.innerHTML = `<button id="toggle-features">Feições</button>
+                   <div id="feature-list"></div>`;
+  return div;
+};
+featureControl.addTo(map);
+
+const layersList = { "Estados (IBGE)": estadosLayerGroup, "INCRA SIGEF": sigefLayer };
+const featureListDiv = document.getElementById('feature-list');
+
+for (const [name, layer] of Object.entries(layersList)) {
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.id = name;
+  checkbox.checked = map.hasLayer(layer);
+  checkbox.onchange = () => { if (checkbox.checked) map.addLayer(layer); else map.removeLayer(layer); };
+
+  const label = document.createElement('label');
+  label.htmlFor = name;
+  label.innerText = name;
+
+  featureListDiv.appendChild(checkbox);
+  featureListDiv.appendChild(label);
+}
+
+document.getElementById('toggle-features').onclick = e => {
+  e.stopPropagation();
+  featureListDiv.style.display = featureListDiv.style.display === 'none' ? 'block' : 'none';
+};
