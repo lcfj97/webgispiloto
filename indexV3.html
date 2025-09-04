@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <title>PROJETO PILOTO – WebGIS Completo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+
+ <style>
+  html, body, #map { 
+    height: 100%; 
+    margin: 0; 
+    padding: 0; 
+  }
+
+  /* Cabeçalho futurista */
+  .map-title {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%); /* centraliza */
+    background: linear-gradient(135deg, #001f3f, #0074D9); /* azul futurista */
+    color: #ffffff;
+    text-align: center;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding: 12px 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border: 1px solid rgba(0, 180, 255, 0.8);
+    text-transform: uppercase;
+    
+    /* efeito de brilho animado */
+    background-size: 200% 200%;
+    animation: gradientShift 6s ease infinite;
+  }
+
+  /* Animação do gradiente */
+  @keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+</style>
+</head>
+<body>
+  <div class="map-title">
+    <strong>Projeto Piloto WEBGIS</strong><br/>
+    Estados • INCRA SIGEF • Desenho
+  </div>
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <script>
+    // 1) Inicializa o mapa no Brasil
+    const map = L.map('map').setView([-14.2350, -51.9253], 4);
+
+    // 2) Camadas base
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    const satelite = L.tileLayer(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { attribution: 'Esri World Imagery', maxZoom: 23 }
+    );
+
+    const topografico = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom: 17, attribution: '© OpenTopoMap'
+    });
+
+    const baseMaps = {
+      "Mapa de Ruas (OSM)": osm,
+      "Imagem de Satélite": satelite,
+      "Mapa Topográfico": topografico
+    };
+
+    // 3) Estados do IBGE (dinâmico)
+const estadosLayerGroup = L.layerGroup().addTo(map);
+
+fetch("https://servicodados.ibge.gov.br/api/v1/localidades/estados")
+  .then(resp => resp.json())
+  .then(estados => {
+    estados.forEach(estado => {
+      const sigla = estado.sigla;   // usar a sigla (SP, RJ, MT)
+      const nome = estado.nome;
+
+      // Aqui chamamos a API do IBGE passando a sigla e pedindo GeoJSON
+      fetch(`https://servicodados.ibge.gov.br/api/v4/malhas/estados/${sigla}?formato=application/vnd.geo+json&qualidade=intermediaria`)
+        .then(resp => resp.json())
+        .then(malha => {
+          L.geoJSON(malha, {
+            style: { color: "#006400", weight: 1.2, fillOpacity: 0.2 },
+            onEachFeature: (feature, layer) => {
+              layer.bindPopup(`<strong>Estado:</strong> ${nome} (${sigla})`);
+            }
+          }).addTo(estadosLayerGroup);
+        })
+        .catch(err => console.error("Erro carregando malha de " + sigla, err));
+    });
+    layerControl.addOverlay(estadosLayerGroup, "Estados (IBGE)");
+  });
+
+    // 4) Controle de camadas (somente Estados + INCRA depois)
+    const overlays = {};
+    const layerControl = L.control.layers(baseMaps, overlays, { collapsed: false }).addTo(map);
+
+    // 5) Escala
+    L.control.scale({ imperial: false, metric: true }).addTo(map);
+
+    // 6) Ferramenta de desenho
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawnItems },
+      draw: {
+        polygon: { tooltip: { start: "Clique para desenhar o polígono" } },
+        polyline: { tooltip: { start: "Clique para desenhar a linha" } },
+        rectangle: { tooltip: { start: "Clique e arraste para desenhar o retângulo" } },
+        circle: false,
+        marker: { tooltip: { start: "Clique no mapa para adicionar um marcador" } },
+        circlemarker: false
+      }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      drawnItems.addLayer(e.layer);
+    });
+
+    // 7) Camada INCRA SIGEF (via GitHub)
+    fetch("https://raw.githubusercontent.com/lcfj97/teste/main/INCRA%20SIGEF%20MT.qmd")
+      .then(resp => resp.json())
+      .then(data => {
+        const sigefLayer = L.geoJSON(data, {
+          style: { color: "orange", weight: 2, fillOpacity: 0.2 },
+          onEachFeature: (feature, layer) => {
+            let props = feature.properties || {};
+            let info = `<strong>Imóvel:</strong> ${props.nome || "Sem nome"}<br/>`;
+            info += `<strong>Matrícula:</strong> ${props.matricula || "-"}<br/>`;
+            info += `<strong>Área:</strong> ${props.area || "-"} ha`;
+            layer.bindPopup(info);
+          }
+        }).addTo(map);
+        layerControl.addOverlay(sigefLayer, "INCRA SIGEF (GitHub)");
+      });
+  </script>
+</body>
+</html>
